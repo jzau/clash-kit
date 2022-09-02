@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Dreamacro/clash/adapter"
+	"github.com/Dreamacro/clash/adapter/outboundgroup"
 	"github.com/Dreamacro/clash/common/batch"
 	"github.com/Dreamacro/clash/config"
 	"github.com/Dreamacro/clash/constant"
@@ -39,6 +41,33 @@ func Setup(homeDir, config string, c Client) {
 	executor.ApplyConfig(base, true)
 }
 
+func PatchSelector(data []byte) {
+	if base == nil {
+		return
+	}
+	mapping := make(map[string]string)
+	err := json.Unmarshal(data, &mapping)
+	if err != nil {
+		return
+	}
+	proxies := tunnel.Proxies()
+	for name, proxy := range proxies {
+		selected, exist := mapping[name]
+		if !exist {
+			continue
+		}
+		outbound, ok := proxy.(*adapter.Proxy)
+		if !ok {
+			continue
+		}
+		selector, ok := outbound.ProxyAdapter.(*outboundgroup.Selector)
+		if !ok {
+			continue
+		}
+		selector.Set(selected)
+	}
+}
+
 func SetConfig(uuid string) error {
 	path := filepath.Join(constant.Path.HomeDir(), uuid, "config.yaml")
 	cfg, err := executor.ParseWithPath(path)
@@ -62,6 +91,10 @@ func SetLogLevel(level string) {
 func SetTunnelMode(mode string) {
 	CloseAllConnections()
 	tunnel.SetMode(tunnel.ModeMapping[mode])
+}
+
+func GetTunnelMode() string {
+	return tunnel.Mode().String()
 }
 
 func CloseAllConnections() {
@@ -115,11 +148,11 @@ func ProxiesData() []byte {
 	return data
 }
 
-func HealthCheck(name string, url string, timeout int) {
+func HealthCheck(name string, url string) []byte {
 	providers := tunnel.Providers()
 	provider, exist := providers[name]
 	if !exist {
-		return
+		return nil
 	}
 	ps := provider.Proxies()
 	proxies := make(map[string]constant.Proxy)
@@ -129,19 +162,23 @@ func HealthCheck(name string, url string, timeout int) {
 		}
 	}
 	if len(proxies) == 0 {
-		return
+		return nil
 	}
 	b, _ := batch.New(context.Background(), batch.WithConcurrencyNum(10))
+	delays := make(map[string]uint16)
 	for _, proxy := range proxies {
 		p := proxy
 		b.Go(p.Name(), func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second * 5)
 			defer cancel()
-			p.URLTest(ctx, url)
+			t, _ := p.URLTest(ctx, url)
+			delays[p.Name()] = t
 			return nil, nil
 		})
 	}
 	b.Wait()
+	data, _ := json.Marshal(delays)
+	return data
 }
 
 func isURLTestAdapterType(at constant.AdapterType) bool {
