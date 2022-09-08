@@ -41,14 +41,22 @@ func Setup(homeDir, config string, c Client) {
 	executor.ApplyConfig(base, true)
 }
 
-func PatchSelector(data []byte) {
+func GetConfigGeneral() []byte {
 	if base == nil {
-		return
+		return nil
+	}
+	data, _ := json.Marshal(base.General)
+	return data
+}
+
+func PatchSelector(data []byte) bool {
+	if base == nil {
+		return false
 	}
 	mapping := make(map[string]string)
 	err := json.Unmarshal(data, &mapping)
 	if err != nil {
-		return
+		return false
 	}
 	proxies := tunnel.Proxies()
 	for name, proxy := range proxies {
@@ -64,8 +72,12 @@ func PatchSelector(data []byte) {
 		if !ok {
 			continue
 		}
-		selector.Set(selected)
+		err := selector.Set(selected)
+		if err == nil {
+			return true
+		}
 	}
+	return false
 }
 
 func SetConfig(uuid string) error {
