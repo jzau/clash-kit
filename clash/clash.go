@@ -1,7 +1,9 @@
 package clash
 
 import (
+	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/Dreamacro/clash/adapter"
@@ -107,4 +109,59 @@ func fetchTraffic() {
 		up, down := t.Now()
 		client.Traffic(up, down)
 	}
+}
+
+func GetProxyDelay(name, url string, timeout int16) int16 {
+	proxies := tunnel.Proxies()
+	proxy, exist := proxies[name]
+	if !exist {
+		return 0
+	}
+
+	delayChan := make(chan uint16, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(timeout))
+		defer cancel()
+
+		delay, err := proxy.URLTest(ctx, url)
+		if err != nil {
+			errChan <- err
+		} else {
+			delayChan <- delay
+		}
+	}()
+
+	select {
+	case delay := <-delayChan:
+		return int16(delay)
+	case <-errChan:
+		return 0
+	case <-time.After(time.Millisecond * time.Duration(timeout)):
+		return 0
+	}
+}
+
+func PatchTunnelMode(modeStr string) bool {
+	if base == nil {
+		return false
+	}
+
+	// Convert mode string to TunnelMode
+	var mode tunnel.TunnelMode
+	switch strings.ToLower(modeStr) {
+	case "global":
+		mode = tunnel.Global
+	case "rule":
+		mode = tunnel.Rule
+	case "direct":
+		mode = tunnel.Direct
+	default:
+		return false // invalid mode string
+	}
+
+	// Set the tunnel mode
+	tunnel.SetMode(mode)
+	return true
 }
